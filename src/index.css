@@ -1,0 +1,9 @@
+/* Adiciona o scroll suave para toda a página */
+html {
+    scroll-behavior: smooth;
+  }
+  
+  @tailwind base;
+  @tailwind components;
+  @tailwind utilities;
+  
