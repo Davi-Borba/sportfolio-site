@@ -12,68 +12,144 @@ import AthletesListPage from './pages/AthletesListPage';
 import FeedPage from './pages/FeedPage';
 
 function App() {
-  const [session, setSession] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [currentPage, setCurrentPage] = useState('home');
-  const [viewingProfileId, setViewingProfileId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState(null);
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [viewingProfileId, setViewingProfileId] = useState(null);
+  const [userRole, setUserRole] = useState(null);
+  const [profile, setProfile] = useState(null);
 
-  useEffect(() => {
-    // Esta é a única fonte da verdade para a autenticação.
-    // Ela dispara uma vez na carga inicial e depois em cada login/logout.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session);
-
-      if (session?.user) {
-        try {
-          // Se há uma sessão, busca o perfil correspondente.
-          const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-          if (error) throw error;
-          setProfile(data);
-          // Define a página padrão para utilizadores logados.
-          if (!viewingProfileId) {
-            setCurrentPage('feed');
-          }
-        } catch (error) {
-          console.error("Erro ao buscar o perfil do utilizador:", error);
-          setProfile(null);
-        }
-      } else {
-        // Se não há sessão, limpa o perfil.
-        setProfile(null);
-        setCurrentPage('home');
-      }
-      
-      // Independentemente do resultado, o carregamento inicial termina aqui.
-      setLoading(false);
-    });
-
-    // Função de limpeza para remover o "ouvinte" quando o componente é desmontado.
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [viewingProfileId]); // A dependência garante que a lógica é reavaliada se sairmos de um perfil.
-
-  const navigate = (page, id = null) => {
-    if (page === 'profile') {
-      setViewingProfileId(id);
+  // Navigation function
+  const navigate = (page, options = {}) => {
+    if (page === 'profile' && options.profileId) {
+      setViewingProfileId(options.profileId);
     } else {
       setViewingProfileId(null);
-      setCurrentPage(page);
+    }
+    setCurrentPage(page);
+  };
+
+  // Function to fetch user profile
+  const fetchUserProfile = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error) throw error;
+      setProfile(data);
+      return data;
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      return null;
     }
   };
 
-  // 1. Mostra o ecrã de carregamento enquanto a sessão inicial está a ser verificada.
+  // Function to check user permissions
+  const checkUserPermissions = async (session) => {
+    if (!session?.user) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single();
+
+      if (error) throw error;
+      return data?.role || 'user';
+    } catch (error) {
+      console.error('Error checking user permissions:', error);
+      return null;
+    }
+  };
+
+  // Function to determine initial page based on user role
+  const determineInitialPage = async (session) => {
+    if (!session?.user) return 'landing';
+
+    const role = await checkUserPermissions(session);
+    setUserRole(role);
+
+    // Determine initial page based on user role
+    switch (role) {
+      case 'admin':
+        return 'dashboard';
+      case 'athlete':
+        return 'athletes_list';
+      default:
+        return 'feed';
+    }
+  };
+
+  useEffect(() => {
+    // Initial session check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) {
+        // Fetch user profile and determine initial page
+        if (session.user) {
+          fetchUserProfile(session.user.id);
+          determineInitialPage(session).then(page => {
+            setCurrentPage(page);
+            setLoading(false);
+          });
+        }
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session && session.user) {
+        fetchUserProfile(session.user.id);
+        determineInitialPage(session).then(page => {
+          setCurrentPage(page);
+        });
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Update profile when userRole changes
+  useEffect(() => {
+    if (session?.user) {
+      fetchUserProfile(session.user.id);
+    }
+  }, [userRole]);
+
+  // 1. Show loading screen while initial session is being verified
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-700">A carregar...</div>;
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-700">Loading...</div>;
   }
 
-  // 2. Se há uma sessão, renderiza o layout da aplicação.
+  // 2. If there's a session, render the application layout
   if (session) {
+    // Check if user has access to the current page based on their role
+    const hasAccess = () => {
+      switch (currentPage) {
+        case 'dashboard':
+          return userRole === 'admin';
+        case 'athletes_list':
+          return userRole === 'athlete';
+        case 'profile':
+          return true; // All authenticated users can view profiles
+        default:
+          return true; // Default pages are accessible to all authenticated users
+      }
+    };
+
+    if (!hasAccess()) {
+      // Redirect to appropriate page based on user role
+      const defaultPage = determineInitialPage(session);
+      setCurrentPage(defaultPage);
+    }
+
     let pageComponent;
     if (viewingProfileId) {
       pageComponent = <ProfilePage profileId={viewingProfileId} onNavigate={navigate} session={session} />;
@@ -99,12 +175,14 @@ function App() {
     );
   }
 
-  // 3. Se não há sessão, renderiza as páginas públicas.
+  // 3. If no session, render public pages
   switch (currentPage) {
     case 'login':
       return <LoginPage onNavigate={navigate} />;
     case 'signup':
       return <SignUpPage onNavigate={navigate} />;
+    case 'profile':
+      return <ProfilePage profileId={viewingProfileId} onNavigate={navigate} session={session} />;
     default:
       return <LandingPage onNavigate={navigate} session={session} />;
   }
