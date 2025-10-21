@@ -15,7 +15,7 @@ function AppHeader({ session, onNavigate, currentPage, profile }) {
     }`;
 
   return (
-    <header className="bg-white shadow-md sticky top-0 z-30">
+    <header className="bg-white shadow-md sticky top-0 z-50 pointer-events-auto">
       <div className="container mx-auto px-6">
         <div className="flex justify-between items-center py-3">
           <div className="flex items-center space-x-8">
